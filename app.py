@@ -21,21 +21,20 @@ image = modal.Image.debian_slim(python_version="3.12").pip_install_from_requirem
 def endpoint():
     from fastapi import FastAPI, WebSocket
     from fastapi.responses import HTMLResponse
+    from bot import run_bot
     
     web_app = FastAPI()
     
     @web_app.post("/")
     async def start_call():
         logger.info("POST TwiML received")
-        # Read the TwiML template - ensure this file exists in your Modal app
+        # Read the TwiML template
         with open("templates/streams.xml") as f:
             twiml_content = f.read()
         return HTMLResponse(content=twiml_content, media_type="application/xml")
     
     @web_app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
-        from bot import run_bot
-        
         await websocket.accept()
         logger.info("WebSocket connection accepted")
         
@@ -51,35 +50,3 @@ def endpoint():
         await run_bot(websocket, stream_sid)
     
     return web_app
-
-# For local testing
-if __name__ == "__main__":
-    import uvicorn
-    from fastapi import FastAPI, WebSocket
-    from fastapi.responses import HTMLResponse
-    from bot import run_bot
-    
-    local_app = FastAPI()
-    
-    @local_app.post("/")
-    async def start_call():
-        logger.info("POST TwiML received")
-        with open("templates/streams.xml") as f:
-            twiml_content = f.read()
-        return HTMLResponse(content=twiml_content, media_type="application/xml")
-    
-    @local_app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        await websocket.accept()
-        logger.info("WebSocket connection accepted")
-        
-        start_data = websocket.iter_text()
-        await start_data.__anext__()
-        call_data = json.loads(await start_data.__anext__())
-        
-        stream_sid = call_data["start"]["streamSid"]
-        logger.info(f"Stream SID: {stream_sid}")
-        
-        await run_bot(websocket, stream_sid)
-    
-    uvicorn.run(local_app, host="0.0.0.0", port=8765)
