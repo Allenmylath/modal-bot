@@ -66,6 +66,7 @@ async def run_bot(
     tts = CartesiaTTSService(
         api_key=os.getenv("CARTESIA_API_KEY"),
         voice_id="156fb8d2-335b-4950-9cb3-a2d33befec77",
+        model="sonic-turbo",
         params=CartesiaTTSService.InputParams(
             speed="normal",
             emotion=[
