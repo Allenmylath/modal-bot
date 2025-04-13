@@ -1,10 +1,9 @@
 import json
 import modal
 from loguru import logger
-import asyncio
 
 MAX_SESSION_TIME = 15 * 60
-app = modal.App("twilio-voice-bot-dev")
+app = modal.App("twilio-voice-bot")
 
 # Create Modal image with all dependencies and include bot.py
 image = (
@@ -17,52 +16,69 @@ image = (
 )
 
 
+# First function for handling TwiML - this is a lightweight function
 @app.function(
     image=image,
-    cpu=1.0,
-    memory=512,
+    cpu=0.5,  # Lower CPU for this simple function
+    memory=256,  # Less memory needed
     secrets=[modal.Secret.from_dotenv()],
-    min_containers=1,  # Updated from keep_warm
-    max_inputs=1,  # Do not reuse instances across requests
-    buffer_containers=1,
+    min_containers=0,
     enable_memory_snapshot=False,
 )
 @modal.asgi_app()
-def endpoint():
-    from fastapi import FastAPI, WebSocket, Request
+def twiml_endpoint():
+    from fastapi import FastAPI
     from fastapi.responses import HTMLResponse
     from fastapi.middleware.cors import CORSMiddleware
-    from bot import prepare_bot_components
 
     web_app = FastAPI()
     web_app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Allows all origins
+        allow_origins=["*"],
         allow_credentials=True,
-        allow_methods=["*"],  # Allows all methods
-        allow_headers=["*"],  # Allows all headers
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
-    # Modified bot.py will need to have prepare_bot_components function
-    # that pre-initializes all the components without requiring a websocket
-
-    @web_app.post("/")
-    async def start_call(request: Request):
-        logger.info("POST TwiML received - Starting to prepare bot components")
-
+    @web_app.post("/twiml")
+    async def start_call():
+        logger.info("POST TwiML received")
         # Read the TwiML template
         with open("/root/templates/streams.xml") as f:
             twiml_content = f.read()
-
-        # Pre-initialize bot components in the background
-        asyncio.create_task(prepare_bot_components())
-
         return HTMLResponse(content=twiml_content, media_type="application/xml")
 
-    @web_app.websocket("/ws")
-    async def websocket_endpoint(websocket: WebSocket):
-        from bot import connect_bot_to_websocket
+    return web_app
 
+
+# Second function for handling WebSocket connections - more resource-intensive
+@app.function(
+    image=image,
+    cpu=0.5,
+    memory=512,
+    secrets=[modal.Secret.from_dotenv()],
+    min_containers=1,
+    max_inputs=1,  # Don't reuse instances across requests
+    buffer_containers=1,
+    enable_memory_snapshot=False,
+)
+@modal.asgi_app()
+def websocket_endpoint():
+    from fastapi import FastAPI, WebSocket
+    from fastapi.middleware.cors import CORSMiddleware
+    from bot import run_bot
+
+    web_app = FastAPI()
+    web_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @web_app.websocket("/ws-handler")
+    async def websocket_handler(websocket: WebSocket):
         await websocket.accept()
         logger.info("WebSocket connection accepted")
 
@@ -74,7 +90,11 @@ def endpoint():
         stream_sid = call_data["start"]["streamSid"]
         logger.info(f"Stream SID: {stream_sid}")
 
-        # Connect the pre-initialized bot to the websocket
-        await connect_bot_to_websocket(websocket, stream_sid)
+        # Run the bot
+        await run_bot(websocket, stream_sid)
 
     return web_app
+
+
+# You'll need to update your streams.xml to point to the new WebSocket endpoint
+# The URL in the <Stream> tag should be: wss://your-modal-app-url.modal.run/websocket-endpoint/ws-handler
